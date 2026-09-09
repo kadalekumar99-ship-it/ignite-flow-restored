@@ -80,7 +80,18 @@ const IMAGE_BATCH = 4;
  * again in the page doubled the traffic per panel for no extra signal.
  */
 const CLIENT_BLANK_CHECK = false;
+/** Idle limit AFTER the stream has started answering (heartbeats every 10s). */
 const PROMPT_IDLE_TIMEOUT_MS = 45_000;
+/**
+ * Limit for the request to even start. On a phone the browser opens only a few
+ * sockets per site, so a prompt request can sit queued behind image requests
+ * for a long time before a single byte moves. The old 45s cap aborted it there,
+ * every retry hit the same queue, and prompt writing froze (e.g. at 60) while
+ * pictures kept arriving.
+ */
+const PROMPT_CONNECT_TIMEOUT_MS = 240_000;
+/** Image lanes that pause while a prompt request needs the connection. */
+const RESERVED_LANES = 2;
 /** Panels shown in the preview grid before "show all" (a 2h script has 1000+). */
 const PREVIEW_LIMIT = 60;
 
