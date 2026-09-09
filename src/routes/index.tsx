@@ -644,7 +644,7 @@ function Index() {
 
       await Promise.all([
         promptStage,
-        ...Array.from({ length: IMAGE_CONCURRENCY }, () => worker()),
+        ...Array.from({ length: IMAGE_CONCURRENCY }, (_, lane) => worker(lane)),
       ]);
 
       await checkpoint(cancelRef.current ? "stopped" : "done");
