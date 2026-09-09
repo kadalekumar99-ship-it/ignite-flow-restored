@@ -530,15 +530,24 @@ function Index() {
       // silently never happened. This is what made retries look broken.
       let inFlight = 0;
 
-      const worker = async () => {
+      const worker = async (lane: number) => {
         for (;;) {
           if (cancelRef.current) return;
+          // A phone keeps only a handful of connections open per site. While a
+          // prompt request is waiting for the server, the extra lanes stand
+          // down so the prompt request gets a connection instead of queueing
+          // behind pictures (this is what froze prompt writing mid-run).
+          if (promptsInFlight > 0 && lane >= RESERVED_LANES) {
+            await new Promise((r) => setTimeout(r, 250));
+            continue;
+          }
           const group = queue.splice(0, IMAGE_BATCH);
           if (group.length === 0) {
             if (promptingDone && inFlight === 0) return;
             await new Promise((r) => setTimeout(r, 150));
             continue;
           }
+
           const wait = cooldownUntil - Date.now();
           if (wait > 0) await new Promise((r) => setTimeout(r, wait));
 
