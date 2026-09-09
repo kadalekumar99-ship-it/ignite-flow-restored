@@ -152,13 +152,22 @@ type PromptRequest = {
  * Reads the prompt endpoint's event stream. Heartbeats keep long published
  * requests alive; only the final result event is exposed to the pipeline.
  */
+/** >0 while a prompt request needs the connection; image lanes back off. */
+let promptsInFlight = 0;
+
 async function getPrompts(input: PromptRequest): Promise<{ prompts: string[] }> {
   const controller = new AbortController();
-  let idleTimer = window.setTimeout(() => controller.abort("Prompt stream stopped responding"), PROMPT_IDLE_TIMEOUT_MS);
+  // Until the first byte arrives, allow the long connect window; after that a
+  // silent stream (no heartbeat) is a real stall.
+  let idleTimer = window.setTimeout(
+    () => controller.abort("Prompt stream stopped responding"),
+    PROMPT_CONNECT_TIMEOUT_MS,
+  );
   const activity = () => {
     window.clearTimeout(idleTimer);
     idleTimer = window.setTimeout(() => controller.abort("Prompt stream stopped responding"), PROMPT_IDLE_TIMEOUT_MS);
   };
+  promptsInFlight++;
   let response: Response;
   try {
     response = await fetch("/api/prompts", {
@@ -169,9 +178,28 @@ async function getPrompts(input: PromptRequest): Promise<{ prompts: string[] }> 
     });
   } catch (error) {
     window.clearTimeout(idleTimer);
+    promptsInFlight = Math.max(0, promptsInFlight - 1);
     if (controller.signal.aborted) throw new Error("Prompt service stopped responding; this range will retry.");
     throw error;
   }
+  activity();
+  try {
+    return await readPromptStream(response, controller, activity, idleTimer);
+  } finally {
+    promptsInFlight = Math.max(0, promptsInFlight - 1);
+  }
+}
+
+async function readPromptStream(
+  response: Response,
+  controller: AbortController,
+  activity: () => void,
+  initialTimer: number,
+): Promise<{ prompts: string[] }> {
+  let idleTimer = initialTimer;
+  const clear = () => window.clearTimeout(idleTimer);
+  void clear;
+
   if (!response.ok) {
     throw new Error((await response.text().catch(() => "")) || `Prompt request failed (${response.status})`);
   }
