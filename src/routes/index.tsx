@@ -157,8 +157,9 @@ let promptsInFlight = 0;
 
 async function getPrompts(input: PromptRequest): Promise<{ prompts: string[] }> {
   const controller = new AbortController();
-  // Until the first byte arrives, allow the long connect window; after that a
-  // silent stream (no heartbeat) is a real stall.
+  // Until the first byte arrives the long connect window applies (the request
+  // may be queued behind image requests on a phone); once the stream answers,
+  // a silent gap longer than a heartbeat is a real stall.
   let idleTimer = window.setTimeout(
     () => controller.abort("Prompt stream stopped responding"),
     PROMPT_CONNECT_TIMEOUT_MS,
@@ -167,86 +168,73 @@ async function getPrompts(input: PromptRequest): Promise<{ prompts: string[] }> 
     window.clearTimeout(idleTimer);
     idleTimer = window.setTimeout(() => controller.abort("Prompt stream stopped responding"), PROMPT_IDLE_TIMEOUT_MS);
   };
+
   promptsInFlight++;
-  let response: Response;
   try {
-    response = await fetch("/api/prompts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify(input),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    window.clearTimeout(idleTimer);
-    promptsInFlight = Math.max(0, promptsInFlight - 1);
-    if (controller.signal.aborted) throw new Error("Prompt service stopped responding; this range will retry.");
-    throw error;
-  }
-  activity();
-  try {
-    return await readPromptStream(response, controller, activity, idleTimer);
-  } finally {
-    promptsInFlight = Math.max(0, promptsInFlight - 1);
-  }
-}
-
-async function readPromptStream(
-  response: Response,
-  controller: AbortController,
-  activity: () => void,
-  initialTimer: number,
-): Promise<{ prompts: string[] }> {
-  let idleTimer = initialTimer;
-  const clear = () => window.clearTimeout(idleTimer);
-  void clear;
-
-  if (!response.ok) {
-    throw new Error((await response.text().catch(() => "")) || `Prompt request failed (${response.status})`);
-  }
-  if (!response.body) throw new Error("Prompt stream was unavailable");
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let result: string[] | undefined;
-  let failure: string | undefined;
-
-  const consume = (frame: string) => {
-    let event = "message";
-    const data: string[] = [];
-    for (const line of frame.split("\n")) {
-      if (line.startsWith("event:")) event = line.slice(6).trim();
-      if (line.startsWith("data:")) data.push(line.slice(5).trim());
-    }
-    if (data.length === 0) return;
-    const payload = JSON.parse(data.join("\n")) as { prompts?: string[]; error?: string };
-    if (event === "result" && Array.isArray(payload.prompts)) result = payload.prompts;
-    if (event === "failure") failure = payload.error || "Prompt generation failed";
-  };
-
-  for (;;) {
-    let chunk: ReadableStreamReadResult<Uint8Array>;
+    let response: Response;
     try {
-      chunk = await reader.read();
+      response = await fetch("/api/prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify(input),
+        signal: controller.signal,
+      });
     } catch (error) {
-      window.clearTimeout(idleTimer);
       if (controller.signal.aborted) throw new Error("Prompt service stopped responding; this range will retry.");
       throw error;
     }
-    const { value, done } = chunk;
-    if (done) break;
     activity();
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
-    frames.forEach(consume);
+
+    if (!response.ok) {
+      throw new Error((await response.text().catch(() => "")) || `Prompt request failed (${response.status})`);
+    }
+    if (!response.body) throw new Error("Prompt stream was unavailable");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result: string[] | undefined;
+    let failure: string | undefined;
+
+    const consume = (frame: string) => {
+      let event = "message";
+      const data: string[] = [];
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        if (line.startsWith("data:")) data.push(line.slice(5).trim());
+      }
+      if (data.length === 0) return;
+      const payload = JSON.parse(data.join("\n")) as { prompts?: string[]; error?: string };
+      if (event === "result" && Array.isArray(payload.prompts)) result = payload.prompts;
+      if (event === "failure") failure = payload.error || "Prompt generation failed";
+    };
+
+    for (;;) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        if (controller.signal.aborted) throw new Error("Prompt service stopped responding; this range will retry.");
+        throw error;
+      }
+      const { value, done } = chunk;
+      if (done) break;
+      activity();
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      frames.forEach(consume);
+    }
+    if (buffer.trim()) consume(buffer);
+    if (failure) throw new Error(failure);
+    if (!result) throw new Error("Prompt stream ended before returning prompts");
+    return { prompts: result };
+  } finally {
+    window.clearTimeout(idleTimer);
+    promptsInFlight = Math.max(0, promptsInFlight - 1);
   }
-  window.clearTimeout(idleTimer);
-  if (buffer.trim()) consume(buffer);
-  if (failure) throw new Error(failure);
-  if (!result) throw new Error("Prompt stream ended before returning prompts");
-  return { prompts: result };
 }
+
 
 
 
