@@ -67,8 +67,19 @@ const PROMPT_RANGE = 60;
  * sustains 24 concurrent Flux Schnell renders with no rate limiting, so four
  * keys comfortably carry ~96). Auto-throttles if the provider pushes back.
  */
-const IMAGE_CONCURRENCY = 12;
-const IMAGE_BATCH = 1;
+/**
+ * The browser opens at most ~6 sockets per origin, so more than 6 lanes just
+ * queue in the network stack and never reach the renderer. Throughput comes
+ * from batching instead: 6 lanes x 4 prompts = 24 images rendered at once.
+ */
+const IMAGE_CONCURRENCY = 6;
+const IMAGE_BATCH = 4;
+/**
+ * The server already downloads and validates every finished image (complete
+ * file + entropy) before returning its URL, so re-downloading and decoding it
+ * again in the page doubled the traffic per panel for no extra signal.
+ */
+const CLIENT_BLANK_CHECK = false;
 const PROMPT_IDLE_TIMEOUT_MS = 45_000;
 /** Panels shown in the preview grid before "show all" (a 2h script has 1000+). */
 const PREVIEW_LIMIT = 60;
@@ -546,7 +557,7 @@ function Index() {
                   // the review pass may have rewritten the prompt server-side
                   const prompt = r.prompt ?? job?.prompt ?? "";
                   for (let attempt = 1; attempt <= 2; attempt++) {
-                    if (!url || !(await isBlankImageUrl(url))) break;
+                    if (!url || !CLIENT_BLANK_CHECK || !(await isBlankImageUrl(url))) break;
                     url = null;
                     if (!prompt) break;
                     try {
@@ -565,7 +576,7 @@ function Index() {
                       url = null;
                     }
                   }
-                  if (url && !(await isBlankImageUrl(url))) {
+                  if (url && (!CLIENT_BLANK_CHECK || !(await isBlankImageUrl(url)))) {
                     record(r.index, { url, prompt, status: "done", error: undefined });
                   } else if (job) {
                     requeue(job, "blank image");
