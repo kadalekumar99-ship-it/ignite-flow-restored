@@ -67,7 +67,7 @@ const PROMPT_RANGE = 60;
  * sustains 24 concurrent Flux Schnell renders with no rate limiting, so four
  * keys comfortably carry ~96). Auto-throttles if the provider pushes back.
  */
-const IMAGE_CONCURRENCY = 4;
+const IMAGE_CONCURRENCY = 12;
 const IMAGE_BATCH = 1;
 const PROMPT_IDLE_TIMEOUT_MS = 45_000;
 /** Panels shown in the preview grid before "show all" (a 2h script has 1000+). */
