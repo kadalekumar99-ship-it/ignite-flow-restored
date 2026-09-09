@@ -557,7 +557,7 @@ function Index() {
                   // the review pass may have rewritten the prompt server-side
                   const prompt = r.prompt ?? job?.prompt ?? "";
                   for (let attempt = 1; attempt <= 2; attempt++) {
-                    if (!url || !(await isBlankImageUrl(url))) break;
+                    if (!url || !CLIENT_BLANK_CHECK || !(await isBlankImageUrl(url))) break;
                     url = null;
                     if (!prompt) break;
                     try {
@@ -576,7 +576,7 @@ function Index() {
                       url = null;
                     }
                   }
-                  if (url && !(await isBlankImageUrl(url))) {
+                  if (url && (!CLIENT_BLANK_CHECK || !(await isBlankImageUrl(url)))) {
                     record(r.index, { url, prompt, status: "done", error: undefined });
                   } else if (job) {
                     requeue(job, "blank image");
