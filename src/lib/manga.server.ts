@@ -1221,14 +1221,18 @@ export async function generateImage(
         },
         body: JSON.stringify({
           prompt: body,
+          // Scene-aware ban list (broken anatomy, duplicate people, text,
+          // wrong time of day, out-of-period objects...). The gateway honours
+          // this field, so those guards no longer pollute the positive prompt.
+          negative_prompt: negative,
           // Quality over speed: the maximum step count Schnell accepts, at the
-          // largest 16:9 size the gateway honours (1280x720 is silently
-          // rejected; 1344x768 is rendered at that exact size).
+          // largest 16:9 size the gateway renders (verified: 1920x1088 comes
+          // back at that exact size, roughly twice the detail of 1344x768).
           num_steps: 8,
           // a fresh seed each attempt, so a blank frame is never re-rolled identically
           seed: seed + attempt * 977,
-          width: 1344,
-          height: 768,
+          width: 1920,
+          height: 1088,
         }),
       });
       if (res.ok) {
