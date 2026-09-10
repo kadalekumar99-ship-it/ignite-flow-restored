@@ -1200,9 +1200,12 @@ export async function generateImage(
   slot = 0,
   bible?: string,
   attempts = 6,
+  line?: string,
 ): Promise<string> {
   const keys = pixazoKeys();
   const body = composeImagePrompt(prompt, bible).slice(0, 2000);
+  const negative = buildNegativePrompt(prompt, line, bible);
+
 
   let lastErr = "";
   for (let attempt = 0; attempt < Math.max(1, attempts); attempt++) {
