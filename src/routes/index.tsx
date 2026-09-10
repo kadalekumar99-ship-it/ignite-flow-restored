@@ -32,6 +32,47 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
+/**
+ * A panel image that heals itself.
+ *
+ * Panels are served straight from the image host, and single requests there do
+ * occasionally fail (transient 403 / connection reset / hotlink refusal), which
+ * leaves a broken-image icon in an otherwise finished run. On the first failure
+ * we re-request the exact same image through our own proxy route, and on a
+ * second failure we retry the proxy once with a cache-buster before giving up.
+ */
+function PanelImage({ src, alt }: { src: string; alt: string }) {
+  const [stage, setStage] = useState(0);
+  useEffect(() => {
+    setStage(0);
+  }, [src]);
+
+  if (stage >= 3) {
+    return (
+      <div className="flex h-full items-center justify-center font-mono text-xs text-muted-foreground">
+        image unavailable — press retry
+      </div>
+    );
+  }
+
+  const resolved =
+    stage === 0
+      ? src
+      : `/api/proxy-image?url=${encodeURIComponent(src)}${stage === 2 ? `&r=${stage}` : ""}`;
+
+  return (
+    <img
+      key={resolved}
+      src={resolved}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      onError={() => setStage((s) => s + 1)}
+      className="h-full w-full object-cover"
+    />
+  );
+}
+
 type Shot = Segment & {
   prompt?: string | undefined;
   url?: string | undefined;
@@ -1253,14 +1294,7 @@ function Index() {
                   </div>
                   <div className="aspect-video w-full bg-muted">
                     {s.url ? (
-                      <img
-                        src={s.url}
-                        alt={`Manga panel ${s.index + 1}`}
-
-                        loading="lazy"
-                        decoding="async"
-                        className="h-full w-full object-cover"
-                      />
+                      <PanelImage src={s.url} alt={`Manga panel ${s.index + 1}`} />
                     ) : (
                       <div className="flex h-full items-center justify-center font-mono text-xs text-muted-foreground">
                         {s.status === "error" ? "failed" : "…"}
