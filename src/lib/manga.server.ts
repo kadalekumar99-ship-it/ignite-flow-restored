@@ -1020,7 +1020,7 @@ export function composeImagePrompt(prompt: string, bible?: string): string {
     peopled
       ? "only the described people, each drawn once, whole separate bodies"
       : "empty environment, no people in frame",
-    "natural clear lighting, wordless artwork with no text or signage",
+    "natural clear lighting, wordless artwork",
     STYLE_TAIL,
     "one single 16:9 widescreen frame showing the whole scene",
   ].filter(Boolean);
@@ -1352,7 +1352,7 @@ export async function renderPanel(
   for (let round = 0; round < 2; round++) {
     tries++;
     try {
-      const url = await generateImage(prompt, seed + round * 1861, slot + round, bible, 1);
+      const url = await generateImage(prompt, seed + round * 1861, slot + round, bible, 1, line);
       return { url, prompt, level: 0, tries, rewritten };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1370,7 +1370,7 @@ export async function renderPanel(
       for (let round = 0; round < 1; round++) {
         tries++;
         try {
-          const url = await generateImage(softened, seed + 5471 + round * 977, slot + round, bible, 1);
+          const url = await generateImage(softened, seed + 5471 + round * 977, slot + round, bible, 1, line);
           return { url, prompt: softened, level: 1, tries, rewritten };
         } catch (e) {
           errors.push(`softened ${round + 1}: ${e instanceof Error ? e.message : String(e)}`);
@@ -1434,12 +1434,12 @@ export async function generateCheckedImage(
   bible?: string,
   line?: string,
 ): Promise<{ url: string; prompt: string; revised: boolean }> {
-  const url = await generateImage(prompt, seed, slot, bible);
+  const url = await generateImage(prompt, seed, slot, bible, 6, line);
   if (!line) return { url, prompt, revised: false };
   const fixed = await reviewPanel(line, prompt, bible, slot);
   if (!fixed) return { url, prompt, revised: false };
   try {
-    const retry = await generateImage(fixed, seed + 4409, slot, bible);
+    const retry = await generateImage(fixed, seed + 4409, slot, bible, 6, line);
     return { url: retry, prompt: fixed, revised: true };
   } catch {
     return { url, prompt, revised: false };
