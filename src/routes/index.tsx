@@ -1294,14 +1294,7 @@ function Index() {
                   </div>
                   <div className="aspect-video w-full bg-muted">
                     {s.url ? (
-                      <img
-                        src={s.url}
-                        alt={`Manga panel ${s.index + 1}`}
-
-                        loading="lazy"
-                        decoding="async"
-                        className="h-full w-full object-cover"
-                      />
+                      <PanelImage src={s.url} alt={`Manga panel ${s.index + 1}`} />
                     ) : (
                       <div className="flex h-full items-center justify-center font-mono text-xs text-muted-foreground">
                         {s.status === "error" ? "failed" : "…"}
