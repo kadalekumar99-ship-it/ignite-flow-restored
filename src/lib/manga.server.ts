@@ -1020,7 +1020,7 @@ export function composeImagePrompt(prompt: string, bible?: string): string {
     peopled
       ? "only the described people, each drawn once, whole separate bodies"
       : "empty environment, no people in frame",
-    "natural clear lighting, wordless artwork with no text or signage",
+    "natural clear lighting, wordless artwork",
     STYLE_TAIL,
     "one single 16:9 widescreen frame showing the whole scene",
   ].filter(Boolean);
@@ -1032,6 +1032,81 @@ export function composeImagePrompt(prompt: string, bible?: string): string {
       .replace(/\s{2,}/g, " "),
     IMAGE_PROMPT_BUDGET,
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Negative prompt                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The gateway DOES accept a `negative_prompt` field, so the ugly-artwork
+ * guards no longer have to live inside the positive prompt (where every noun
+ * was a token Flux could decide to draw).
+ *
+ * Always-on: broken anatomy, duplicated people, text/watermarks, panel grids,
+ * photo/3D looks and low-quality artefacts.
+ */
+const BASE_NEGATIVE = [
+  "text, letters, words, captions, subtitles, watermark, signature, logo",
+  "speech bubbles, signs, posters, billboards, written characters",
+  "extra limbs, extra arms, extra legs, extra fingers, missing fingers, malformed hands, fused hands",
+  "two heads, conjoined bodies, fused figures, merged people, duplicated character, cloned face, twins",
+  "deformed face, distorted anatomy, disfigured, mutated, wrong proportions, crossed eyes, uneven eyes, melted features",
+  "blurry, out of focus, low resolution, pixelated, jpeg artifacts, noise, grain, smudged, muddy colours",
+  "unfinished sketch, rough draft lines, flat empty background, half-drawn, cut-off subject, cropped head",
+  "panel grid, split screen, collage, multiple frames, borders, comic page layout, character reference sheet",
+  "photograph, photorealistic, 3d render, cgi, plastic doll skin, oil painting texture, pencil sketch",
+  "nsfw, nudity, sexualised, gore, dismemberment",
+].join(", ");
+
+/**
+ * Scene-aware negatives, derived from the prompt (and its script line) so each
+ * panel bans exactly the mistakes that scene invites: people in an empty room,
+ * a crowd around a lone character, night in a daylight scene, modern objects in
+ * a period setting.
+ */
+export function buildNegativePrompt(prompt: string, line?: string, bible?: string): string {
+  const p = `${prompt} ${line ?? ""}`.toLowerCase();
+  const extra: string[] = [];
+
+  if (!hasPeople(prompt, bible)) {
+    extra.push("people, human figures, faces, characters, crowd, silhouettes of people");
+  } else {
+    const crowd =
+      /\b(crowd|crowds|villagers|soldiers|students|audience|market|group of|many people|onlookers|gathering)\b/.test(
+        p,
+      );
+    if (!crowd) extra.push("crowd, background people, extra bystanders, additional characters");
+    if (/\b(alone|by (him|her)self|solitary|only)\b/.test(p)) extra.push("second person, companion");
+  }
+
+  const day = /\b(day|daytime|daylight|morning|noon|afternoon|sunlight|sunny|sunlit|bright sky)\b/.test(p);
+  const night = /\b(night|midnight|dark(ness)?|moonlight|lamplight|candle|dusk|evening|starlit)\b/.test(p);
+  if (day && !night) extra.push("night, darkness, moonlight, black sky, dim unlit scene");
+  if (night && !day) extra.push("bright midday sunshine, blazing daylight sky");
+
+  const indoor = /\b(room|indoors?|inside|hall|kitchen|classroom|bedroom|office|shop interior|temple interior|corridor|cave)\b/.test(p);
+  const outdoor = /\b(street|road|field|forest|sky|outdoors?|courtyard|mountain|river|village lane|market|garden|rooftop)\b/.test(p);
+  if (indoor && !outdoor) extra.push("open sky, outdoor landscape");
+  if (outdoor && !indoor) extra.push("indoor walls, ceiling, interior room");
+
+  const period = /\b(village|ancient|temple|palace|kingdom|sword|monk|horse cart|lantern|dynasty|traditional|hut|shrine|warrior)\b/.test(p);
+  const modern = /\b(car|phone|smartphone|laptop|tv|bus|train|bike|motorcycle|city|apartment|neon|computer|camera)\b/.test(p);
+  if (period && !modern) {
+    extra.push("cars, smartphones, electric wires, neon signs, skyscrapers, modern clothing");
+  }
+
+  if (/\b(child|children|kid|boy|girl|student|teenager)\b/.test(p)) {
+    extra.push("adult body proportions on a child, aged-up face");
+  }
+  if (/\b(elderly|old man|old woman|grandmother|grandfather)\b/.test(p)) {
+    extra.push("youthful smooth face on an elderly character");
+  }
+  if (/\b(calm|peaceful|happy|smiling|celebration|festival|laughing)\b/.test(p)) {
+    extra.push("horror imagery, monsters, blood, distressing gore");
+  }
+
+  return clip([BASE_NEGATIVE, ...extra].join(", "), 1400);
 }
 
 
@@ -1125,9 +1200,12 @@ export async function generateImage(
   slot = 0,
   bible?: string,
   attempts = 6,
+  line?: string,
 ): Promise<string> {
   const keys = pixazoKeys();
   const body = composeImagePrompt(prompt, bible).slice(0, 2000);
+  const negative = buildNegativePrompt(prompt, line, bible);
+
 
   let lastErr = "";
   for (let attempt = 0; attempt < Math.max(1, attempts); attempt++) {
@@ -1143,14 +1221,18 @@ export async function generateImage(
         },
         body: JSON.stringify({
           prompt: body,
+          // Scene-aware ban list (broken anatomy, duplicate people, text,
+          // wrong time of day, out-of-period objects...). The gateway honours
+          // this field, so those guards no longer pollute the positive prompt.
+          negative_prompt: negative,
           // Quality over speed: the maximum step count Schnell accepts, at the
-          // largest 16:9 size the gateway honours (1280x720 is silently
-          // rejected; 1344x768 is rendered at that exact size).
+          // largest 16:9 size the gateway renders (verified: 1920x1088 comes
+          // back at that exact size, roughly twice the detail of 1344x768).
           num_steps: 8,
           // a fresh seed each attempt, so a blank frame is never re-rolled identically
           seed: seed + attempt * 977,
-          width: 1344,
-          height: 768,
+          width: 1920,
+          height: 1088,
         }),
       });
       if (res.ok) {
@@ -1270,7 +1352,7 @@ export async function renderPanel(
   for (let round = 0; round < 2; round++) {
     tries++;
     try {
-      const url = await generateImage(prompt, seed + round * 1861, slot + round, bible, 1);
+      const url = await generateImage(prompt, seed + round * 1861, slot + round, bible, 1, line);
       return { url, prompt, level: 0, tries, rewritten };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1288,7 +1370,7 @@ export async function renderPanel(
       for (let round = 0; round < 1; round++) {
         tries++;
         try {
-          const url = await generateImage(softened, seed + 5471 + round * 977, slot + round, bible, 1);
+          const url = await generateImage(softened, seed + 5471 + round * 977, slot + round, bible, 1, line);
           return { url, prompt: softened, level: 1, tries, rewritten };
         } catch (e) {
           errors.push(`softened ${round + 1}: ${e instanceof Error ? e.message : String(e)}`);
@@ -1352,12 +1434,12 @@ export async function generateCheckedImage(
   bible?: string,
   line?: string,
 ): Promise<{ url: string; prompt: string; revised: boolean }> {
-  const url = await generateImage(prompt, seed, slot, bible);
+  const url = await generateImage(prompt, seed, slot, bible, 6, line);
   if (!line) return { url, prompt, revised: false };
   const fixed = await reviewPanel(line, prompt, bible, slot);
   if (!fixed) return { url, prompt, revised: false };
   try {
-    const retry = await generateImage(fixed, seed + 4409, slot, bible);
+    const retry = await generateImage(fixed, seed + 4409, slot, bible, 6, line);
     return { url: retry, prompt: fixed, revised: true };
   } catch {
     return { url, prompt, revised: false };
